@@ -63,7 +63,7 @@ mod tests {
 
 
     #[test]
-    #[ignore]
+    #[ignore = "Crea un directorio 'temporal' con logs"]
     fn test_logger_in_temp_dir() {
         let temp_dir = PathBuf::from("./temporal");
         fs::create_dir_all(&temp_dir).unwrap();

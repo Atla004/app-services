@@ -6,6 +6,7 @@ use chrono::{DateTime, Local};
 
 mod monitor;
 mod logger;
+mod ftp;
 use monitor::Monitor;
 use logger::Logger;
 
