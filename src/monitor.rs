@@ -1,8 +1,11 @@
 use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
+use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 use std::collections::HashSet;
+
 
 pub struct Monitor {
     path: PathBuf,
@@ -19,24 +22,29 @@ impl Monitor {
         Monitor { path, tx }
     }
 
-    pub fn start(&self) {
+    pub fn start(&self, stop_flag: Arc<AtomicBool>) {
         let (watcher_tx, watcher_rx) = std::sync::mpsc::channel();
         let mut watcher: RecommendedWatcher = Watcher::new(watcher_tx, notify::Config::default()).unwrap();
         watcher.watch(&self.path, RecursiveMode::Recursive).unwrap();
-
+    
         let mut last_event_time = Instant::now();
         let mut event_set: HashSet<PathBuf> = HashSet::new();
-
+    
         loop {
-            match watcher_rx.recv() {
+            // Aquí revisamos el stop_flag
+            if stop_flag.load(Ordering::SeqCst) {
+                break;
+            }
+
+    
+            match watcher_rx.recv_timeout(Duration::from_millis(500)) {
                 Ok(Ok(event)) => {
                     let now = Instant::now();
-                    
                     if now.duration_since(last_event_time) > Duration::from_secs(1) {
                         event_set.clear();
                     }
                     last_event_time = now;
-
+    
                     for path in &event.paths {
                         if !event_set.contains(path) {
                             event_set.insert(path.clone());
@@ -49,10 +57,14 @@ impl Monitor {
                     }
                 }
                 Ok(Err(e)) => println!("watch error: {:?}", e),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                    // Ignoramos timeouts y seguimos esperando eventos
+                }
                 Err(e) => println!("watch error: {:?}", e),
             }
         }
     }
+
 }
 
 #[cfg(test)]
@@ -75,7 +87,7 @@ mod tests {
         // Create and start the monitor
         let monitor = Monitor::new(dir_path.clone(), tx);
         thread::spawn(move || {
-            monitor.start();
+            monitor.start(Arc::new(AtomicBool::new(false)));
         });
 
         // Add a small delay to ensure the monitor is ready

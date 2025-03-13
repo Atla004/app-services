@@ -1,5 +1,6 @@
 use std::net::TcpStream;
 use std::io::{self, Read, Write};
+use std::time::Duration;
 
 pub struct TcpClient {
     address: String,
@@ -41,10 +42,18 @@ impl TcpClient {
     pub fn receive_message(&mut self) -> io::Result<String> {
         let mut buffer = [0; 512];
         if let Some(ref mut stream) = self.stream {
-            let n = stream.read(&mut buffer)?;
-            let message = String::from_utf8_lossy(&buffer[..n]).to_string();
-            println!("Mensaje recibido: {}", message);
-            Ok(message)
+            // Se establece un timeout para la lectura: si no llegan datos en 5 segundos, se retorna un error.
+            stream.set_read_timeout(Some(Duration::from_secs(5)))?;
+            match stream.read(&mut buffer) {
+                Ok(n) => {
+                    let message = String::from_utf8_lossy(&buffer[..n]).to_string();
+                    println!("Mensaje recibido: {}", message);
+                    Ok(message)
+                },
+                Err(_e) => {
+                    Err(io::Error::new(io::ErrorKind::TimedOut, "Error al recibir mensaje: Timeout"))
+                }
+            }
         } else {
             Err(io::Error::new(
                 io::ErrorKind::NotConnected,
@@ -56,9 +65,10 @@ impl TcpClient {
     /// Desconecta (cierra) la conexión TCP.
     pub fn disconnect(&mut self) {
         if self.stream.is_some() {
-            // Al usar take() se elimina el valor, cerrando la conexión.
+            // Al usar take() se elimina el valor, cerrando la conexión
             self.stream.take();
-            println!("Desconectado de {}", self.address);
+        } else {
+            println!("La conexión con {} ya estaba cerrada.", self.address);
         }
     }
 }
@@ -81,14 +91,14 @@ mod tests {
     #[ignore = "Requiere un servidor TCP en 127.0.0.1:7878 que, al conectarse, envíe un mensaje."]
     fn test_tcp_client_receive() -> io::Result<()> {
         
-        let address = "127.0.0.1:7878";
+        let address = "192.168.225.11:57833";
         let mut client = TcpClient::new(address);
 
         client.connect()?;
 
         let msg = client.receive_message()?;
         println!("Test: Mensaje recibido: {}", msg);
-        let msg2 = client.receive_message()?;
+        let _ = client.receive_message()?;
 
         // Desconectarse.
         client.disconnect();
