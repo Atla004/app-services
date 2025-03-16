@@ -50,8 +50,13 @@ impl TcpClient {
                     println!("Mensaje recibido: {}", message);
                     Ok(message)
                 },
-                Err(_e) => {
-                    Err(io::Error::new(io::ErrorKind::TimedOut, "Error al recibir mensaje: Timeout"))
+                Err(e) => {
+                    eprintln!("tipo de error: {}", e.kind());
+                    if e.kind() == io::ErrorKind::TimedOut {
+                        Err(io::Error::new(io::ErrorKind::TimedOut, "Error al recibir mensaje: Timeout"))
+                    } else {
+                        Err(io::Error::new(io::ErrorKind::NotConnected, "No existe conexión establecida"))
+                    }
                 }
             }
         } else {

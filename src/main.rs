@@ -1,5 +1,5 @@
 use std::{
-    env, io::Write, path::Path, sync::{
+    env, path::Path, sync::{
         atomic::{AtomicBool, Ordering},
         mpsc, Arc, Mutex
     }, thread, time::Duration
@@ -34,7 +34,6 @@ const FTP_PASSWORD: &str = "test";
 define_windows_service!(ffi_service_main, my_service_main);
 
 fn my_service_main(_arguments: Vec<std::ffi::OsString>) {
-    
     // Creamos un flag compartido para indicar cuándo detener
     let stop_flag = Arc::new(AtomicBool::new(false));
     let stop_flag_handler = Arc::clone(&stop_flag);
@@ -76,6 +75,7 @@ fn my_service_main(_arguments: Vec<std::ffi::OsString>) {
     }).unwrap();
 }
 
+
 // Extrae la lógica que ya tienes en main() a una función separada.
 fn main_logic(stop_flag: Arc<AtomicBool>) {
     let (tx, rx) = mpsc::channel::<FileEvent>();
@@ -103,9 +103,20 @@ fn main_logic(stop_flag: Arc<AtomicBool>) {
     }
 
     let log_path = base_path.join("monitor_log.txt");
+    let log_main_path = base_path.join("main_log.txt");
+    let log_monitor_path = base_path.join("monitor_log.txt");
+    let log_ftp_path = base_path.join("ftp_log.txt");
+    let log_tcp_path = base_path.join("tcp_log.txt");
+    let log_logger_path = base_path.join("logger_log.txt");
+
 
     // Se crea el logger; en caso de no poderse escribir, se mostrará el error.
     let logger = Arc::new(Mutex::new(Logger::new(log_path.clone()).expect("...")));
+    let logger_main = Arc::new(Logger::new(log_main_path.clone()).expect("..."));
+    let logger_monitor = Arc::new(Logger::new(log_monitor_path.clone()).expect("..."));
+    let logger_ftp = Arc::new(Logger::new(log_ftp_path.clone()).expect("..."));
+    let logger_tcp = Arc::new(Logger::new(log_tcp_path.clone()).expect("..."));
+    let logger_logger = Arc::new(Logger::new(log_logger_path.clone()).expect("..."));
     
     
     
@@ -119,7 +130,12 @@ fn main_logic(stop_flag: Arc<AtomicBool>) {
     
     let monitor_thread = thread::spawn(move || {
         let monitor = Monitor::new(downloads_path, tx);
+        let logger_monitor_clone = Arc::clone(&logger_monitor);
+        logger_monitor_clone.add_log("monitor Thread comenzdo").expect("Could not write log message");
+        
         monitor.start(monitor_stop_flag);
+        logger_monitor_clone.add_log("monitor Thread finalizdo").expect("Could not write log message");
+
         println!("Finalizando thread de monitor.");
     });
     
@@ -130,8 +146,13 @@ fn main_logic(stop_flag: Arc<AtomicBool>) {
     let tcp_client_clone = Arc::clone(&tcp_client);
 
     let logger_thread = thread::spawn(move || {
+
+        let logger_logger_clone = Arc::clone(&logger_logger);
+        
         loop {
+
             if logger_stop_flag.load(Ordering::SeqCst) {
+                logger_logger_clone.add_log("logger Thread a finalizar").expect("Could not write log message");
                 break;
             }
             if let Ok(event) = rx.recv() {
@@ -153,6 +174,7 @@ fn main_logic(stop_flag: Arc<AtomicBool>) {
                 drop(logger);
             }
         }
+        logger_logger_clone.add_log("logger Thread finalizado").expect("Could not write log message");
         println!("Finalizando thread de log.");
     });
     
@@ -164,7 +186,11 @@ fn main_logic(stop_flag: Arc<AtomicBool>) {
     let tcp_thread = {
         let tcp_client_clone = Arc::clone(&tcp_client);
         thread::spawn(move || {
+            
+            let logger_tcp_clone = Arc::clone(&logger_tcp);
+            logger_tcp_clone.add_log("tcp Thread comenzdo").expect("Could not write log message");
             while !tcp_stop_flag.load(Ordering::SeqCst) {
+            
                 println!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
                 if !tcp_is_connected {
                     match tcp_client_clone.lock().unwrap().connect() {
@@ -172,8 +198,10 @@ fn main_logic(stop_flag: Arc<AtomicBool>) {
                             tcp_is_connected = true;
                             tx_ftp.send(tcp_is_connected).unwrap();
                             println!("Conectado al servidor TCP.");
+                            logger_tcp_clone.add_log("connect").expect("Could not write log message");
                         },
                         Err(e) => {
+                            logger_tcp_clone.add_log("error reintentando").expect("Could not write log message");
                             eprintln!("Error conectando al servidor TCP: {}. Reintentando en 10 segundos...", e);
                             thread::sleep(Duration::from_secs(10));
                         }
@@ -192,15 +220,17 @@ fn main_logic(stop_flag: Arc<AtomicBool>) {
                         },
                     }
                 } else {
+
                     println!("TCP no está conectado, repitiendo.");
                 }
                 println!("Reconectando al servidor TCP...");
             }
             {
-
+                
                 let mut tcp_client = tcp_client_clone.lock().unwrap();
                 tcp_client.disconnect();
             }
+            logger_tcp_clone.add_log("tcp Thread finalizado").expect("Could not write log message");
             println!("Finalizando thread TCP.");
 
         })
@@ -213,7 +243,11 @@ fn main_logic(stop_flag: Arc<AtomicBool>) {
     let tcp_client_clone = Arc::clone(&tcp_client);
         thread::spawn(move || {
             let mut is_connected = tcp_is_connected;
+            let logger_ftp_clone = Arc::clone(&logger_ftp);
+            logger_ftp_clone.add_log("ftp Thread comenzdo").expect("Could not write log message");
+
             while !ftp_stop_flag.load(Ordering::SeqCst) {
+                println!("FTP thread activo......................................");
                 if !is_connected {
                     println!("Esperando mensaje de reconexión FTP...");
                     
@@ -231,30 +265,55 @@ fn main_logic(stop_flag: Arc<AtomicBool>) {
                 } 
                 
 
-                println!("Esperando mensaje TCP...");
-                match tcp_client_clone.lock().unwrap().receive_message() {
+                println!("Esperando mensaje TCP...............................");
+                let mut reciever = tcp_client_clone.lock().unwrap();
+                println!("LOCK reciver TCP...............................");
+                match reciever.receive_message() {
                     Ok(msg) => {
+                        drop(reciever);
                         let trimmed = msg.trim();
-                        tcp_client_clone.lock().unwrap().send_message(trimmed).unwrap();
-                        let message = if trimmed.eq_ignore_ascii_case("log") {
-                            let x =TcpMessage::Log(log_path_str.clone());
-                            let logger = logger_clone_tcp.lock().unwrap();
-                            logger.reset_log().unwrap();
-                            drop(logger);
-                            x
-                        } else if trimmed.starts_with("Path:") {
-                            TcpMessage::Path(trimmed.strip_prefix("Path:").unwrap().trim().to_string())
-                        } else {
-                            TcpMessage::Other(trimmed.to_string())
+                        println!("Mensaje recibido en trim: {}", trimmed);
+                        let now: DateTime<Local> = Local::now();
+                        logger_ftp_clone.add_log(&format!("{} - ftp Thread comenzado {}", now.format("%Y-%m-%d %H:%M:%S"), trimmed)).expect("Could not write log message");
+                        let mut lockeer=tcp_client_clone.lock().unwrap();
+                        println!("lockeado");
+                        lockeer.send_message(trimmed).unwrap();
+                        drop(lockeer);
+                        println!("Mensaje enviado al servidor TCP y dropeado.");
+                        println!("apunto del match.");
+                        let message = match trimmed {
+                            trimmed if trimmed.eq_ignore_ascii_case("log") => {
+                                let x = TcpMessage::Log(log_path_str.clone());
+                                let logger = logger_clone_tcp.lock().unwrap();
+                                logger.reset_log().unwrap();
+                                drop(logger);
+                                x
+                            },
+                            trimmed if trimmed.starts_with("Path:") => {
+                                TcpMessage::Path(trimmed.strip_prefix("Path:").unwrap().trim().to_string())
+                            },
+                            _ => {
+                                println!("Otro mensaje");
+                                logger_ftp_clone.add_log("{} - otro mensaje {}").expect("Could not write log message");
+                                let met = TcpMessage::Other(trimmed.to_string());
+                                println!("Otro mensaje fin");
+                                met
+                            }
                         };
+                        println!("Procesando mensaje...");
+                        logger_ftp_clone.add_log("{} - Error... {}").expect("Could not write log message");
                         
                         if let Err(e) = process_tcp_message(message) {
                             tcp_client_clone.lock().unwrap().send_message(&e).unwrap();
                         }
+                        println!("Mensaje procesado y enviado.");
                     },
                     Err(e) => {
+                        drop(reciever);
+                        logger_ftp_clone.add_log("{} - Procesando mensaje... {}").expect("Could not write log message");
+                        
                         eprintln!("Error recibiendo mensaje TCP: {}", e);
-                        if e.kind() == std::io::ErrorKind::ConnectionReset {
+                        if e.kind() != std::io::ErrorKind::TimedOut {
                             println!("Desconectado del servidor TCP, enviando mensaje.");
                             is_connected = false;
                             if let Err(e) = tx_tcp_clone.send(false) {
@@ -263,22 +322,31 @@ fn main_logic(stop_flag: Arc<AtomicBool>) {
                         }
                     }
                 }
+                logger_ftp_clone.add_log("{} - REINICIANDO EL WHILE... {}").expect("Could not write log message");
+                        
+                println!("REINICIANDO EL WHILE...............................");
             }
+            logger_ftp_clone.add_log("Finalizando thread FTP").expect("Could not write log message");
+                        
             println!("Finalizando thread FTP.");
         })
     };
 
-    let max_duration = 20; // Cambia este valor según lo que necesites
+    let max_duration = 180; // Cambia este valor según lo que necesites
     let start_time = std::time::Instant::now();
 
+    
+    let logger_main_clone = Arc::clone(&logger_main);
     // Bucle en el thread principal: espera hasta que se active la señal de parada
     while !stop_flag.load(Ordering::SeqCst) {
         // Comprobamos tiempo transcurrido
+        logger_main_clone.add_log(&format!("ESTE ES PARA VER SI SE DETENIEN EL SERVICIO {} y esto ES LO QUE FALTA PARA QUE SE DETENGA: {}",!stop_flag.load(Ordering::SeqCst),)).expect("Could not write log message");
         if start_time.elapsed().as_secs() >= max_duration {
             println!("Tiempo de prueba agotado, deteniendo el servicio.");
             stop_flag.store(true, Ordering::SeqCst);
-            tx_tcp.send(false).unwrap();
-
+            if let Err(e) = tx_tcp.send(false) {
+                eprintln!("No se pudo enviar mensaje a través del canal tx_tcp: {}", e);
+            }
         }
         thread::sleep(Duration::from_secs(1));
 
