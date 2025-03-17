@@ -340,23 +340,26 @@ fn main_logic(stop_flag: Arc<AtomicBool>) {
     // Bucle en el thread principal: espera hasta que se active la señal de parada
     while !stop_flag.load(Ordering::SeqCst) {
         // Comprobamos tiempo transcurrido
-        logger_main_clone.add_log(&format!("ESTE ES PARA VER SI SE DETENIEN EL SERVICIO {} y esto ES LO QUE FALTA PARA QUE SE DETENGA: {}",!stop_flag.load(Ordering::SeqCst),)).expect("Could not write log message");
+        logger_main_clone.add_log(&format!("ESTE ES PARA VER SI SE DETENIEN EL SERVICIO  y esto ES LO QUE FALTA PARA QUE SE DETENGA: {}",!stop_flag.load(Ordering::SeqCst),)).expect("Could not write log message");
         if start_time.elapsed().as_secs() >= max_duration {
             println!("Tiempo de prueba agotado, deteniendo el servicio.");
             stop_flag.store(true, Ordering::SeqCst);
             if let Err(e) = tx_tcp.send(false) {
+                logger_main_clone.add_log("Error enviando mensaje de detención a través del canal tx_tcp").expect("Could not write log message");
                 eprintln!("No se pudo enviar mensaje a través del canal tx_tcp: {}", e);
             }
         }
         thread::sleep(Duration::from_secs(1));
 
     }
+    logger_main_clone.add_log("main Thread finalizado, Señal de detención recibida").expect("Could not write log message");
     println!("Señal de detención recibida, finalizando main_logic.");
 
     let _ = monitor_thread.join();
     let _ = logger_thread.join();
     let _ = tcp_thread.join();
     let _ = ftp_thread.join();
+    logger_main_clone.add_log("main Thread finalizado WUUUUUUUUUU").expect("Could not write log message");
 }
 
 fn process_tcp_message(message: TcpMessage) -> Result<(), String> {
