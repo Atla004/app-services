@@ -264,6 +264,46 @@ fn uninstall_service() -> windows_service::Result<()> {
     Ok(())
 }
 
+fn process_tcp_message(message: TcpMessage) -> Result<(), String> {
+    match message {
+        TcpMessage::Log(path_log) => {
+            let ftp_client = FtpClient::new(FTP_ADDRESS, FTP_USERNAME, FTP_PASSWORD);
+            if let Err(e) = ftp_client.upload_file(path_log, "monitor_log.txt") {
+                eprintln!("Error enviando archivo de log: {}", e);
+                Err(e.to_string())
+            } else {
+                println!("Archivo de log enviado.");
+                Ok(())
+            }
+        },
+        TcpMessage::Path(path_str) => {
+            println!("Recibido 'Path: {}', enviando archivo...", path_str);
+            let ftp_client = FtpClient::new(FTP_ADDRESS, FTP_USERNAME, FTP_PASSWORD);
+            let remote_filename = std::path::Path::new(&path_str)
+                .file_name()
+                .and_then(|os_str| os_str.to_str())
+                .unwrap_or("unknown_file");
+            if let Err(e) = ftp_client.upload_file(&path_str, remote_filename) {
+                eprintln!("Error subiendo el archivo {}: {}", path_str, e);
+                Err(e.to_string())
+            } else {
+                println!("Archivo {} enviado.", path_str);
+                Ok(())
+            }
+        },
+        TcpMessage::Other(msg) => {
+            println!("Recibido mensaje: {}", msg);
+            Ok(())
+        },
+    }
+}
+
+enum TcpMessage {
+    Log(String),
+    Path(String),
+    Other(String),
+}
+
 // Modified main() to handle "install" and "uninstall" arguments.
 fn main() {
     debug_log("Inicio de ejecución del programa."); // new debug_log
