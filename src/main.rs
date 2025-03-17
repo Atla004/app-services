@@ -19,11 +19,19 @@ use windows_service::service::{ServiceInfo, ServiceStartType, ServiceErrorContro
 
 mod monitor;
 mod logger;
-mod debug;
-use crate::debug::debug_log;
+mod ftp;
+mod tcp;
 
 use monitor::{FileEvent, Monitor};
 use logger::Logger;
+use tcp::TcpClient;
+use ftp::FtpClient;
+
+
+mod debug;
+use crate::debug::debug_log;
+
+
 
 // Define el handler del servicio.
 define_windows_service!(ffi_service_main, my_service_main);
