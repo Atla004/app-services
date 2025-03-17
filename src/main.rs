@@ -102,6 +102,8 @@ fn my_service_main(_arguments: Vec<std::ffi::OsString>) {
 fn main_logic(stop_flag: Arc<AtomicBool>) {
     debug_log("main_logic iniciado.");
     let (tx, rx) = mpsc::channel::<FileEvent>();
+    let (tx_tcp, rx_tcp) = mpsc::channel::<bool>();
+    let (tx_ftp, rx_ftp) = mpsc::channel::<bool>();
 
     // Se intenta obtener la variable USERPROFILE o se usa una ruta alternativa
     let user_profile = String::from("C:\\Users\\ATS");
@@ -207,8 +209,154 @@ fn main_logic(stop_flag: Arc<AtomicBool>) {
         logger_logger_clone.add_log("logger Thread finalizado").expect("Could not write log message");
         println!("Finalizando thread de log.");
     });
+
+
+
+
+
+
+    let tcp_client_clone = Arc::clone(&tcp_client);
     
-    let max_duration = 30; // Cambia este valor según lo que necesites
+    let log_path_str = log_path.to_str().unwrap().to_string();
+    let mut tcp_is_connected = false;
+    
+    let tcp_stop_flag = Arc::clone(&stop_flag);
+    let tx_tcp_clone = tx_tcp.clone();
+    let tcp_thread = {
+        let tcp_client_clone = Arc::clone(&tcp_client);
+        thread::spawn(move || {
+            while !tcp_stop_flag.load(Ordering::SeqCst) {
+            
+                println!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+                if !tcp_is_connected {
+                    match tcp_client_clone.lock().unwrap().connect() {
+                        Ok(_) => {
+                            tcp_is_connected = true;
+                            tx_ftp.send(tcp_is_connected).unwrap();
+                            println!("Conectado al servidor TCP.");
+                        },
+                        Err(e) => {
+                            eprintln!("Error conectando al servidor TCP: {}. Reintentando en 10 segundos...", e);
+                            thread::sleep(Duration::from_secs(10));
+                        }
+                    }
+                }
+                if tcp_is_connected {
+                    println!("TCP está conectado; esperando desconexión.");
+                    match rx_tcp.recv() {
+                        Ok(reconnect) => {
+                            println!("Recibido mensaje de reconexión. {}", reconnect);
+                            tcp_is_connected = reconnect;
+                        },
+                        Err(e) => {
+                            eprintln!("Error recibiendo mensaje de reconexión: {}. Se intentará reconectar.", e);
+                            tcp_is_connected = false;
+                        },
+                    }
+                } else {
+
+                    println!("TCP no está conectado, repitiendo.");
+                }
+                println!("Reconectando al servidor TCP...");
+            }
+            {
+                
+                let mut tcp_client = tcp_client_clone.lock().unwrap();
+                tcp_client.disconnect();
+            }
+            println!("Finalizando thread TCP.");
+
+        })
+    };
+
+    // Thread FTP
+    let ftp_stop_flag = Arc::clone(&stop_flag);
+    let logger_clone_tcp = Arc::clone(&logger);
+    let ftp_thread = {
+    let tcp_client_clone = Arc::clone(&tcp_client);
+        thread::spawn(move || {
+            let mut is_connected = tcp_is_connected;
+
+            while !ftp_stop_flag.load(Ordering::SeqCst) {
+                println!("FTP thread activo......................................");
+                if !is_connected {
+                    println!("Esperando mensaje de reconexión FTP...");
+                    
+                    match rx_ftp.recv() {
+                        Ok(reconnect) => {
+                            println!("Recibido mensaje de reconexión FTP. {}", reconnect);
+                            is_connected = reconnect;
+                        },
+                        Err(e) => {
+                            eprintln!("Error recibiendo mensaje de reconexión FTP: {}. Se intentará reconectar.", e);
+                            is_connected = false;
+                        },
+                    }
+                    println!("Conectado al servidor FTP.");
+                } 
+                
+
+                println!("Esperando mensaje TCP...............................");
+                let mut reciever = tcp_client_clone.lock().unwrap();
+                println!("LOCK reciver TCP...............................");
+                match reciever.receive_message() {
+                    Ok(msg) => {
+                        drop(reciever);
+                        let trimmed = msg.trim();
+                        println!("Mensaje recibido en trim: {}", trimmed);
+                        let now: DateTime<Local> = Local::now();
+                        let mut lockeer=tcp_client_clone.lock().unwrap();
+                        println!("lockeado");
+                        lockeer.send_message(trimmed).unwrap();
+                        drop(lockeer);
+                        println!("Mensaje enviado al servidor TCP y dropeado.");
+                        println!("apunto del match.");
+                        let message = match trimmed {
+                            trimmed if trimmed.eq_ignore_ascii_case("log") => {
+                                let x = TcpMessage::Log(log_path_str.clone());
+                                let logger = logger_clone_tcp.lock().unwrap();
+                                logger.reset_log().unwrap();
+                                drop(logger);
+                                x
+                            },
+                            trimmed if trimmed.starts_with("Path:") => {
+                                TcpMessage::Path(trimmed.strip_prefix("Path:").unwrap().trim().to_string())
+                            },
+                            _ => {
+                                println!("Otro mensaje");
+                                let met = TcpMessage::Other(trimmed.to_string());
+                                println!("Otro mensaje fin");
+                                met
+                            }
+                        };
+                        println!("Procesando mensaje...");
+                        if let Err(e) = process_tcp_message(message) {
+                            tcp_client_clone.lock().unwrap().send_message(&e).unwrap();
+                        }
+                        println!("Mensaje procesado y enviado.");
+                    },
+                    Err(e) => {
+                        drop(reciever);
+
+                        eprintln!("Error recibiendo mensaje TCP: {}", e);
+                        if e.kind() != std::io::ErrorKind::TimedOut {
+                            println!("Desconectado del servidor TCP, enviando mensaje.");
+                            is_connected = false;
+                            if let Err(e) = tx_tcp_clone.send(false) {
+                                eprintln!("No se pudo enviar mensaje a través del canal tx_tcp: {}", e);
+                            }
+                        }
+                    }
+                }
+
+                println!("REINICIANDO EL WHILE...............................");
+            }
+
+            println!("Finalizando thread FTP.");
+        })
+    };
+    
+    let max_duration = 180; // Cambia este valor según lo que necesites
     let start_time = std::time::Instant::now();
 
     
