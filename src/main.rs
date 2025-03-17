@@ -134,6 +134,8 @@ fn main_logic(stop_flag: Arc<AtomicBool>) {
     let logger_monitor = Arc::new(Logger::new(log_monitor_path.clone()).expect("..."));
     let logger_logger = Arc::new(Logger::new(log_logger_path.clone()).expect("..."));
 
+    //Clientes
+    let tcp_client = Arc::new(Mutex::new(TcpClient::new(TCP_ADDRESS)));
     
     
 
