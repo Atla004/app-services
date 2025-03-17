@@ -34,11 +34,30 @@ const FTP_PASSWORD: &str = "test";
 define_windows_service!(ffi_service_main, my_service_main);
 
 fn my_service_main(_arguments: Vec<std::ffi::OsString>) {
+    let base_path = if let Ok(user_profile) = env::var("USERPROFILE") {
+        // Queremos utilizar la carpeta "C:\Users\andre\Documents\Vas"
+        Path::new(&user_profile).join("Documents").join("Vas")
+    } else {
+        // Ruta alternativa garantizada
+        Path::new("C:\\ProgramData\\VasService").to_path_buf()
+    };
+
+    // Se crea la carpeta si no existe para garantizar permisos de escritura.
+    if let Err(e) = std::fs::create_dir_all(&base_path) {
+        eprintln!("Error creando la carpeta base {:?}: {}", base_path, e);
+    } else {
+        println!("Carpeta base asegurada: {:?}", base_path);
+    }
+
+    let matenme_path = base_path.join("matenme.txt");
+
+    let logger_matenme = Arc::new(Logger::new(matenme_path.clone()).expect("..."));
+    
     // Creamos un flag compartido para indicar cuándo detener
     let stop_flag = Arc::new(AtomicBool::new(false));
     let stop_flag_handler = Arc::clone(&stop_flag);
     
-    let status_handle = service_control_handler::register("VAS", move |control_event| -> ServiceControlHandlerResult {
+    let status_handle =match  service_control_handler::register("VAS", move |control_event| -> ServiceControlHandlerResult {
         match control_event {
             ServiceControl::Stop => {
                 println!("Recibiendo señal de detención...");
@@ -47,10 +66,17 @@ fn my_service_main(_arguments: Vec<std::ffi::OsString>) {
             _ => {}
         }
         ServiceControlHandlerResult::NoError
-    }).unwrap();
+    }) {
+        Ok(handle) => handle,
+        Err(e) => {
+            logger_matenme.add_log( format!("Error al registrar el handler de control: {:?}", e).as_str()).expect("Could not write log message");
+            eprintln!("Error al registrar el handler de control: {:?}", e);
+            return; // O maneja el error según convenga.
+        }
+    };
 
-    // Actualiza el estado a "Running".
-    status_handle.set_service_status(ServiceStatus {
+    // Actualiza el estado a "Running" inmediatamente
+    if let Err(e) = status_handle.set_service_status(ServiceStatus {
         service_type: ServiceType::OWN_PROCESS,
         current_state: ServiceState::Running,
         controls_accepted: ServiceControlAccept::STOP,
@@ -58,23 +84,29 @@ fn my_service_main(_arguments: Vec<std::ffi::OsString>) {
         checkpoint: 0,
         wait_hint: Duration::default(),
         process_id: None,
-    }).unwrap();
+    }){
+        eprintln!("Error al actualizar el estado del servicio: {:?}", e);
+        logger_matenme.add_log(format!("Error al actualizar el estado del servicio: {:?}", e).as_str()).expect("Could not write log message");
+        return;
+    }
 
-    // Llama a la lógica principal, pasando el flag de detención.
-    main_logic(stop_flag);
+    // Inicia la lógica principal en un hilo separado
+    let stop_flag_clone = Arc::clone(&stop_flag);
+    thread::spawn(move || {
+        main_logic(stop_flag_clone);
 
-    // Actualiza el estado a "Stopped" al finalizar.
-    status_handle.set_service_status(ServiceStatus {
-        service_type: ServiceType::OWN_PROCESS,
-        current_state: ServiceState::Stopped,
-        controls_accepted: ServiceControlAccept::empty(),
-        exit_code: ServiceExitCode::Win32(0),
-        checkpoint: 0,
-        wait_hint: Duration::default(),
-        process_id: None,
-    }).unwrap();
+        // Actualiza el estado a "Stopped" al finalizar
+        status_handle.set_service_status(ServiceStatus {
+            service_type: ServiceType::OWN_PROCESS,
+            current_state: ServiceState::Stopped,
+            controls_accepted: ServiceControlAccept::empty(),
+            exit_code: ServiceExitCode::Win32(0),
+            checkpoint: 0,
+            wait_hint: Duration::default(),
+            process_id: None,
+        }).unwrap();
+    });
 }
-
 
 // Extrae la lógica que ya tienes en main() a una función separada.
 fn main_logic(stop_flag: Arc<AtomicBool>) {
