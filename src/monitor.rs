@@ -31,7 +31,6 @@ impl Monitor {
         let mut event_set: HashSet<PathBuf> = HashSet::new();
     
         loop {
-            // Aquí revisamos el stop_flag
             if stop_flag.load(Ordering::SeqCst) {
                 break;
             }
