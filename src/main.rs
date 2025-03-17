@@ -31,6 +31,10 @@ use ftp::FtpClient;
 mod debug;
 use crate::debug::debug_log;
 
+const TCP_ADDRESS: &str = "127.0.0.1:7878";
+const FTP_ADDRESS: &str = "127.0.0.1:21";
+const FTP_USERNAME: &str = "test";
+const FTP_PASSWORD: &str = "test";
 
 
 // Define el handler del servicio.
