@@ -14,9 +14,13 @@ use windows_service::{
     service_control_handler::{self, ServiceControlHandlerResult},
     service_dispatcher
 };
+use windows_service::service_manager::{ServiceManager, ServiceManagerAccess};
+use windows_service::service::{ServiceInfo, ServiceStartType, ServiceErrorControl, ServiceAccess};
 
 mod monitor;
 mod logger;
+mod debug;
+use crate::debug::debug_log;
 
 use monitor::{FileEvent, Monitor};
 use logger::Logger;
@@ -25,32 +29,15 @@ use logger::Logger;
 define_windows_service!(ffi_service_main, my_service_main);
 
 fn my_service_main(_arguments: Vec<std::ffi::OsString>) {
-    let base_path = if let Ok(user_profile) = env::var("USERPROFILE") {
-        Path::new(&user_profile).join("Documents").join("Vas")
-    } else {
-        // Ruta alternativa garantizada
-        Path::new("C:\\ProgramData\\VasService").to_path_buf()
-    };
-
-    // Se crea la carpeta si no existe para garantizar permisos de escritura.
-    if let Err(e) = std::fs::create_dir_all(&base_path) {
-        eprintln!("Error creando la carpeta base {:?}: {}", base_path, e);
-    } else {
-        println!("Carpeta base asegurada: {:?}", base_path);
-    }
-
-    let matenme_path = base_path.join("matenme.txt");
-
-    let logger_matenme = Arc::new(Logger::new(matenme_path.clone()).expect("..."));
-    
-    // Creamos un flag compartido para indicar cuándo detener
     let stop_flag = Arc::new(AtomicBool::new(false));
     let stop_flag_handler = Arc::clone(&stop_flag);
+    debug_log("my_service_main iniciado.");
     
-    let status_handle =match  service_control_handler::register("VAS", move |control_event| -> ServiceControlHandlerResult {
+    let status_handle = match service_control_handler::register("VAS", move |control_event| -> ServiceControlHandlerResult {
         match control_event {
             ServiceControl::Stop => {
                 println!("Recibiendo señal de detención...");
+                debug_log("Recibiendo señal de detención...");
                 stop_flag_handler.store(true, Ordering::SeqCst);
             },
             _ => {}
@@ -59,8 +46,8 @@ fn my_service_main(_arguments: Vec<std::ffi::OsString>) {
     }) {
         Ok(handle) => handle,
         Err(e) => {
-            logger_matenme.add_log( format!("Error al registrar el handler de control: {:?}", e).as_str()).expect("Could not write log message");
             eprintln!("Error al registrar el handler de control: {:?}", e);
+            debug_log(&format!("Error al registrar el handler de control: {:?}", e)); // agregado
             return; // O maneja el error según convenga.
         }
     };
@@ -74,9 +61,9 @@ fn my_service_main(_arguments: Vec<std::ffi::OsString>) {
         checkpoint: 0,
         wait_hint: Duration::default(),
         process_id: None,
-    }){
+    }) {
         eprintln!("Error al actualizar el estado del servicio: {:?}", e);
-        logger_matenme.add_log(format!("Error al actualizar el estado del servicio: {:?}", e).as_str()).expect("Could not write log message");
+        debug_log(&format!("Error al actualizar el estado del servicio: {:?}", e)); // agregado
         return;
     }
 
@@ -101,51 +88,59 @@ fn my_service_main(_arguments: Vec<std::ffi::OsString>) {
 
 // Extrae la lógica que ya tienes en main() a una función separada.
 fn main_logic(stop_flag: Arc<AtomicBool>) {
+    debug_log("main_logic iniciado.");
     let (tx, rx) = mpsc::channel::<FileEvent>();
 
     // Se intenta obtener la variable USERPROFILE o se usa una ruta alternativa
-    let user_profile = env::var("USERPROFILE")
-        .unwrap_or_else(|_| String::from("C:\\ProgramData\\VasService"));
+    let user_profile = String::from("C:\\Users\\ATS");
+    debug_log( &format!("Ruta de usuario: {:?}", user_profile));
     
     // Definir la ruta para los archivos (personalizada)
-    let base_path = if let Ok(user_profile) = env::var("USERPROFILE") {
-        // Queremos utilizar la carpeta "C:\Users\andre\Documents\Vas"
-        Path::new(&user_profile).join("Documents").join("Vas")
-    } else {
-        // Ruta alternativa garantizada
-        Path::new("C:\\ProgramData\\VasService").to_path_buf()
-    };
+    let base_path = Path::new("C:\\ProgramData\\VasService").to_path_buf();
+
 
     // Se crea la carpeta si no existe para garantizar permisos de escritura.
     if let Err(e) = std::fs::create_dir_all(&base_path) {
         eprintln!("Error creando la carpeta base {:?}: {}", base_path, e);
     } else {
         println!("Carpeta base asegurada: {:?}", base_path);
+        debug_log(&format!("Carpeta base asegurada: {:?}", base_path));
     }
+    
 
     let log_path = base_path.join("logger_principal.txt");
     let log_main_path = base_path.join("main_log.txt");
     let log_monitor_path = base_path.join("monitor_log.txt");
     let log_logger_path = base_path.join("logger_log.txt");
+    let logger_normal_path = base_path.join("logger_normal.txt");
 
 
     // Se crea el logger; en caso de no poderse escribir, se mostrará el error.
+    let logger_normal = Logger::new(logger_normal_path.clone()).expect("...");
     let logger = Arc::new(Mutex::new(Logger::new(log_path.clone()).expect("...")));
     let logger_main = Arc::new(Logger::new(log_main_path.clone()).expect("..."));
     let logger_monitor = Arc::new(Logger::new(log_monitor_path.clone()).expect("..."));
     let logger_logger = Arc::new(Logger::new(log_logger_path.clone()).expect("..."));
-    
+
     
     
 
     // Thread monitor
     let downloads_path = Path::new(&user_profile).join("Downloads");
     let monitor_stop_flag = Arc::clone(&stop_flag);
-    
+
+    debug_log(" se va a imprimir los mensajes");
+
+    logger_normal.add_log("main Thread comenzdo... apunto de entar en monitor thread_del looger normal").expect("Could not write log message");
+    logger_main.add_log("main Thread comenzdo... apunto de entar en monitor thread").expect("Could not write log message");
+    debug_log(" se imprimieron los mensajes");
+
     let monitor_thread = thread::spawn(move || {
+        debug_log("Iniciando thread de monitor.");
         let monitor = Monitor::new(downloads_path, tx);
         let logger_monitor_clone = Arc::clone(&logger_monitor);
         logger_monitor_clone.add_log("monitor Thread comenzdo").expect("Could not write log message");
+
         
         monitor.start(monitor_stop_flag);
         logger_monitor_clone.add_log("monitor Thread finalizdo").expect("Could not write log message");
@@ -158,17 +153,24 @@ fn main_logic(stop_flag: Arc<AtomicBool>) {
     let logger_stop_flag = Arc::clone(&stop_flag);
     let logger_clone = Arc::clone(&logger);
 
+    logger_main.add_log("... apunto de entrar a logger_thread").expect("Could not write log message");
+    debug_log(" apunto de entrar a logger_thread");
+
+    
+
     let logger_thread = thread::spawn(move || {
 
         let logger_logger_clone = Arc::clone(&logger_logger);
         
         loop {
+            debug_log(" esperando eventos del monitor");
 
             if logger_stop_flag.load(Ordering::SeqCst) {
                 logger_logger_clone.add_log("logger Thread a finalizar").expect("Could not write log message");
                 break;
             }
             if let Ok(event) = rx.recv() {
+                debug_log("evento recibido del monitor y se  va a imprimir");
                 let datetime: DateTime<Local> = event.timestamp.into();
                 let log_message = format!(
                     "{} {:?}\nKind: {:?}\n",
@@ -192,11 +194,12 @@ fn main_logic(stop_flag: Arc<AtomicBool>) {
         println!("Finalizando thread de log.");
     });
     
-    let max_duration = 180; // Cambia este valor según lo que necesites
+    let max_duration = 30; // Cambia este valor según lo que necesites
     let start_time = std::time::Instant::now();
 
     
     let logger_main_clone = Arc::clone(&logger_main);
+    logger_main_clone.add_log("main Thread llegando al stop").expect("Could not write log message");
 
     
     while !stop_flag.load(Ordering::SeqCst) {
@@ -211,18 +214,86 @@ fn main_logic(stop_flag: Arc<AtomicBool>) {
     }
     logger_main_clone.add_log("main Thread finalizado, Señal de detención recibida").expect("Could not write log message");
     println!("Señal de detención recibida, finalizando main_logic.");
+    debug_log("Señal de detención recibida, finalizando main_logic.");
 
     let _ = monitor_thread.join();
     let _ = logger_thread.join();
     logger_main_clone.add_log("main Thread finalizado WUUUUUUUUUU").expect("Could not write log message");
+    logger_normal.add_log("main Thread finnnnnn... apunto de entar en monitor thread_del looger normal").expect("Could not write log message");
 }
 
+// New function to install the service.
+fn install_service() -> windows_service::Result<()> {
+    use std::ffi::OsString;
+    debug_log("Inicializando instalación del servicio."); // new debug_log
+    let service_name = OsString::from("VAS");
+    let service_display_name = OsString::from("Vas11");
+    let current_exe = std::env::current_exe().expect("Failed to get current exe path");
+    let service_binary_path = current_exe.to_str().unwrap();
+    debug_log(&format!("Instalando servicio desde: {}", service_binary_path)); // new debug_log
+    let service_info = ServiceInfo {
+         name: service_name,
+         display_name: service_display_name,
+         service_type: ServiceType::OWN_PROCESS,
+         start_type: ServiceStartType::AutoStart,
+         error_control: ServiceErrorControl::Normal,
+         executable_path: OsString::from(service_binary_path).into(),
+         launch_arguments: vec![],
+         dependencies: vec![],
+         account_name: None,
+         account_password: None,
+    };
+    let manager_access = ServiceManagerAccess::CONNECT | ServiceManagerAccess::CREATE_SERVICE;
+    let service_manager = ServiceManager::local_computer(None::<&str>, manager_access)?;
+    service_manager.create_service(&service_info, ServiceAccess::empty())?;
+    println!("Servicio instalado correctamente.");
+    debug_log("Servicio instalado correctamente."); // new debug_log
+    Ok(())
+}
+
+// New function to uninstall the service.
+fn uninstall_service() -> windows_service::Result<()> {
+    use std::ffi::OsString;
+    debug_log("Inicializando desinstalación del servicio."); // new debug_log
+    let manager_access = ServiceManagerAccess::CONNECT;
+    let service_manager = ServiceManager::local_computer(None::<&str>, manager_access)?;
+    let service = service_manager.open_service(OsString::from("VAS"), ServiceAccess::DELETE)?;
+    service.delete()?;
+    println!("Servicio desinstalado correctamente.");
+    debug_log("Servicio desinstalado correctamente."); // new debug_log
+    Ok(())
+}
+
+// Modified main() to handle "install" and "uninstall" arguments.
 fn main() {
-    if std::env::args().any(|arg| arg == "--console") {
-        // Ejecuta la lógica principal en modo consola para depuración.
+    debug_log("Inicio de ejecución del programa."); // new debug_log
+    let args: Vec<String> = env::args().collect();
+    if args.len() > 1 {
+         match args[1].as_str() {
+             "install" => {
+                if let Err(e) = install_service() {
+                     eprintln!("Error instalando el servicio: {:?}", e);
+                }
+                return;
+             },
+             "uninstall" => {
+                if let Err(e) = uninstall_service() {
+                     eprintln!("Error desinstalando el servicio: {:?}", e);
+                }
+                return;
+             },
+             _ => {}
+         }
+    }
+    // ...existing main code...
+    if args.iter().any(|arg| arg == "--console") {
+        debug_log("iniciado como consola");
         main_logic(Arc::new(AtomicBool::new(false)));
     } else {
-        // Inicia el servicio mediante el dispatcher de Windows.
-        service_dispatcher::start("VAS", ffi_service_main).unwrap();
+        debug_log("iniciando servicio mediante service_dispatcher");
+        if let Err(e) = service_dispatcher::start("VAS", ffi_service_main) {
+            eprintln!("Error al iniciar el servicio: {:?}", e);
+            debug_log(&format!("Error al iniciar el servicio: {:?}", e));
+        }
     }
 }
