@@ -92,10 +92,9 @@ fn my_service_main(_arguments: Vec<std::ffi::OsString>) {
 
     // Inicia la lógica principal en un hilo separado
     let stop_flag_clone = Arc::clone(&stop_flag);
-    thread::spawn(move || {
+    let main_thread = thread::spawn(move || {
         main_logic(stop_flag_clone);
-
-        // Actualiza el estado a "Stopped" al finalizar
+        // Una vez finalizada la lógica, actualiza el estado a Stopped
         status_handle.set_service_status(ServiceStatus {
             service_type: ServiceType::OWN_PROCESS,
             current_state: ServiceState::Stopped,
@@ -106,6 +105,8 @@ fn my_service_main(_arguments: Vec<std::ffi::OsString>) {
             process_id: None,
         }).unwrap();
     });
+
+    main_thread.join().unwrap();
 }
 
 // Extrae la lógica que ya tienes en main() a una función separada.
