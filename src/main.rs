@@ -102,7 +102,7 @@ fn main_logic(stop_flag: Arc<AtomicBool>) {
         println!("Carpeta base asegurada: {:?}", base_path);
     }
 
-    let log_path = base_path.join("monitor_log.txt");
+    let log_path = base_path.join("logger_principal.txt");
     let log_main_path = base_path.join("main_log.txt");
     let log_monitor_path = base_path.join("monitor_log.txt");
     let log_ftp_path = base_path.join("ftp_log.txt");
@@ -166,12 +166,13 @@ fn main_logic(stop_flag: Arc<AtomicBool>) {
                 println!("{}", log_message);
                 let logger = logger_clone.lock().unwrap();
                 println!("Escribiendo en el log...");
-                logger.add_log("hola23\n").expect("Could not write initial log message");
+                logger_logger_clone.add_log("Escribiendo en el log...").expect("Could not write to log file");
+                logger_logger_clone.add_log(&log_message).expect("Could not write to log file");
                 logger.add_log(&log_message).expect("Could not write to log file");
-                println!("Log actualizado.");
-                tcp_client_clone.lock().unwrap().send_message("log se ha actualizado").unwrap();
-                println!("Mensaje enviado al servidor TCP.");
                 drop(logger);
+                println!("Log actualizado.");
+                logger_logger_clone.add_log("Log actualizado.").expect("Could not write to log file");
+                println!("Mensaje enviado al servidor TCP.");
             }
         }
         logger_logger_clone.add_log("logger Thread finalizado").expect("Could not write log message");
